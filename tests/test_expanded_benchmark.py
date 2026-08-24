@@ -3,9 +3,15 @@ from context_memory.expanded_benchmark import EXPANDED_QUESTIONS, build_expanded
 
 
 def test_expanded_benchmark_has_ten_variants_per_base_question():
-    assert len(QUESTIONS) == 30
-    assert len(EXPANDED_QUESTIONS) == 300
-    assert len({q.id for q in EXPANDED_QUESTIONS}) == 300
+    assert len(QUESTIONS) == 36
+    assert len(EXPANDED_QUESTIONS) == 360
+    assert len({q.id for q in EXPANDED_QUESTIONS}) == 360
+
+
+def test_expanded_benchmark_includes_abstention_cases():
+    abstention = [q for q in QUESTIONS if q.category == "abstention"]
+    assert len(abstention) == 6
+    assert all(q.gold_evidence_ids == () for q in abstention)
 
 
 def test_expanded_questions_preserve_gold_evidence_and_categories():

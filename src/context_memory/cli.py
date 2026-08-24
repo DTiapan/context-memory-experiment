@@ -2,6 +2,7 @@ import argparse
 import json
 
 from .data import MEMORIES, QUESTIONS
+from .expanded_benchmark import EXPANDED_QUESTIONS
 from .evaluation_v4 import run_benchmark_v4
 from .evaluation_scale import run_scaling_experiment, summarize, row_dicts
 from .diagnostic_scale import diagnostic_dicts
@@ -18,16 +19,21 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.scale:
-        rows, build_times, index_build_times = run_scaling_experiment(SCALE_SIZES, QUESTIONS, build_corpus)
+        # Scaling uses the expanded question set so corpus size and query count
+        # are independent variables. The normal benchmark remains unchanged.
+        scale_questions = EXPANDED_QUESTIONS
+        rows, build_times, index_build_times = run_scaling_experiment(SCALE_SIZES, scale_questions, build_corpus)
         # Diagnostics are observational only: they do not alter retrieval.
         diagnostic_rows = {}
         for size in SCALE_SIZES:
             memories = build_corpus(size)
-            diagnostic_rows[str(size)] = diagnostic_dicts(QUESTIONS, memories)
+            diagnostic_rows[str(size)] = diagnostic_dicts(scale_questions, memories)
 
         print(json.dumps({
             "experiment": "corpus_scaling",
-            "questions": len(QUESTIONS),
+            "questions": len(scale_questions),
+            "base_questions": len(QUESTIONS),
+            "question_variants_per_base": len(scale_questions) // len(QUESTIONS),
             "corpus_sizes": SCALE_SIZES,
             "summary": summarize(rows),
             "corpus_build_ms": [{"corpus_size": s, "latency_ms": round(t, 3)} for s, t in build_times],

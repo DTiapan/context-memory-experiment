@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import os
+import re
 from typing import Protocol
 
 from .data import BenchmarkQuestion, MemoryChunk
@@ -22,6 +23,8 @@ class SufficiencyJudge(Protocol):
 class OpenRouterSufficiencyJudge:
     """LLM evidence judge using OpenRouter's OpenAI-compatible API."""
 
+    DEFAULT_MODEL = "nvidia/nemotron-3.5-lightning:free"
+
     def __init__(self, model: str | None = None):
         from openai import OpenAI
 
@@ -32,11 +35,23 @@ class OpenRouterSufficiencyJudge:
         self.client = OpenAI(
             api_key=api_key,
             base_url="https://openrouter.ai/api/v1",
-            default_headers={
-                "X-Title": "context-memory-experiment",
-            },
+            default_headers={"X-Title": "context-memory-experiment"},
         )
-        self.model = model or os.environ.get("OPENROUTER_MODEL", "openai/gpt-5.5")
+        self.model = model or os.environ.get("OPENROUTER_MODEL", self.DEFAULT_MODEL)
+
+    @staticmethod
+    def _parse_json(content: str) -> dict:
+        """Parse strict JSON first, then tolerate a fenced/raw JSON object."""
+        text = (content or "").strip()
+        if not text:
+            raise ValueError("LLM judge returned an empty response")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+            if not match:
+                raise ValueError(f"LLM judge returned non-JSON content: {text[:300]!r}")
+            return json.loads(match.group(0))
 
     def judge(self, question: BenchmarkQuestion, memories: list[MemoryChunk]) -> JudgeDecision:
         evidence = "\n".join(f"[{m.id}] {m.text}" for m in memories)
@@ -52,19 +67,19 @@ Decide whether the retrieved memories contain enough information to answer the q
 Do not assume facts that are not present in the memories.
 If information is missing, list concise search concepts that could help retrieve it.
 
-Return ONLY JSON matching this schema:
-{{"sufficient": true|false, "confidence": 0.0, "missing": ["concept"]}}
+Return ONLY a JSON object:
+{{"sufficient": true, "confidence": 0.0, "missing": ["concept"]}}
 """
         response = self.client.chat.completions.create(
             model=self.model,
             temperature=0,
-            response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": "Return valid JSON only."},
                 {"role": "user", "content": prompt},
             ],
         )
-        payload = json.loads(response.choices[0].message.content or "{}")
+        content = response.choices[0].message.content or ""
+        payload = self._parse_json(content)
         return JudgeDecision(
             bool(payload.get("sufficient", False)),
             float(payload.get("confidence", 0.0)),
@@ -72,5 +87,4 @@ Return ONLY JSON matching this schema:
         )
 
 
-# Backward-compatible name for callers that still import the old class.
 OpenAISufficiencyJudge = OpenRouterSufficiencyJudge

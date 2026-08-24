@@ -5,6 +5,7 @@ import math
 
 from .data import MemoryChunk
 from .selective_index import SelectiveMemoryIndex, terms
+from .token_cache import TokenCache
 
 
 @dataclass(frozen=True)
@@ -28,14 +29,10 @@ def retrieve_or(
     *,
     top_k: int = 8,
     gold_evidence_ids: tuple[str, ...] = (),
+    index: SelectiveMemoryIndex | None = None,
 ) -> ORCandidateSet:
-    """Generate candidates using OR semantics, then rank with lightweight IDF.
-
-    Unlike the MVP-5 AND/intersection lookup, every query term contributes
-    candidates. Rare terms receive more weight, while documents matching more
-    query terms rank higher. This keeps recall as the primary guardrail.
-    """
-    index = SelectiveMemoryIndex(memories)
+    """Generate OR candidates using a prebuilt index when available."""
+    index = index or SelectiveMemoryIndex(memories)
     query_terms = terms(query)
     corpus_size = max(len(memories), 1)
 

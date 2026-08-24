@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from time import perf_counter
 
@@ -131,8 +132,6 @@ def run_scale_point(
     by_id = {m.id: m for m in memories}
     rows: list[ScaleRow] = []
     for question_number, question in enumerate(questions, start=1):
-        # Sequential baselines scan the entire corpus. Indexed iterative uses
-        # the inverted index before the same progressive ranking procedure.
         rows.append(_row(size, question, fixed_top_k(question, memories), by_id))
         rows.append(_row(size, question, iterative(question, memories), by_id))
         rows.append(_row(size, question, indexed_iterative(question, index), by_id))
@@ -141,6 +140,38 @@ def run_scale_point(
         if progress is not None:
             progress(question_number, len(questions), len(rows))
     return rows
+
+
+def _run_scale_point_worker(size, questions, corpus_builder):
+    """Run one corpus size in a separate process so scale points overlap."""
+    start = perf_counter()
+    memories = corpus_builder(size)
+    build_ms = (perf_counter() - start) * 1000
+
+    start = perf_counter()
+    InvertedIndex(memories)
+    index_build_ms = (perf_counter() - start) * 1000
+
+    last_reported = 0
+    started_at = perf_counter()
+
+    def report(question_number: int, question_total: int, row_count: int) -> None:
+        nonlocal last_reported
+        if question_number != question_total and question_number - last_reported < 10:
+            return
+        last_reported = question_number
+        elapsed = perf_counter() - started_at
+        rate = question_number / elapsed if elapsed else 0.0
+        remaining = (question_total - question_number) / rate if rate else 0.0
+        print(
+            f"[scale] corpus={size:,} | questions {question_number}/{question_total} | "
+            f"rows {row_count:,} | {rate:.1f} q/s | ETA {remaining:.1f}s",
+            file=sys.stderr,
+            flush=True,
+        )
+
+    rows = run_scale_point(size, questions, memories, progress=report)
+    return size, rows, build_ms, index_build_ms
 
 
 def summarize(rows: list[ScaleRow]) -> list[dict]:
@@ -172,57 +203,51 @@ def summarize(rows: list[ScaleRow]) -> list[dict]:
 
 
 def run_scaling_experiment(sizes, questions, corpus_builder, show_progress: bool = True):
-    rows: list[ScaleRow] = []
-    build_times = []
-    index_build_times = []
+    """Run independent corpus sizes concurrently and collect results deterministically."""
+    rows_by_size = {}
+    build_times = {}
+    index_build_times = {}
     total_points = len(sizes)
-    total_questions = len(questions)
+    max_workers = min(3, total_points)
 
-    for point_number, size in enumerate(sizes, start=1):
-        if show_progress:
-            print(
-                f"[scale {point_number}/{total_points}] corpus={size:,} | "
-                f"0/{total_questions} questions | building corpus...",
-                file=sys.stderr,
-                flush=True,
-            )
+    if show_progress:
+        print(
+            f"[scale] running {total_points} corpus sizes with {max_workers} workers",
+            file=sys.stderr,
+            flush=True,
+        )
 
-        start = perf_counter()
-        memories = corpus_builder(size)
-        build_times.append((size, (perf_counter() - start) * 1000))
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(_run_scale_point_worker, size, questions, corpus_builder): size
+            for size in sizes
+        }
+        completed = 0
+        for future in as_completed(futures):
+            size, point_rows, build_ms, index_build_ms = future.result()
+            rows_by_size[size] = point_rows
+            build_times[size] = build_ms
+            index_build_times[size] = index_build_ms
+            completed += 1
+            if show_progress:
+                print(
+                    f"[scale] completed corpus={size:,} ({completed}/{total_points})",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
-        start = perf_counter()
-        InvertedIndex(memories)
-        index_build_times.append((size, (perf_counter() - start) * 1000))
-
-        last_reported = 0
-        started_at = perf_counter()
-
-        def report(question_number: int, question_total: int, row_count: int) -> None:
-            nonlocal last_reported
-            # Report every 10 questions, plus the final question. This gives
-            # useful feedback without flooding the terminal.
-            if question_number != question_total and question_number - last_reported < 10:
-                return
-            last_reported = question_number
-            elapsed = perf_counter() - started_at
-            rate = question_number / elapsed if elapsed else 0.0
-            remaining = (question_total - question_number) / rate if rate else 0.0
-            print(
-                f"[scale {point_number}/{total_points}] corpus={size:,} | "
-                f"questions {question_number}/{question_total} | "
-                f"rows {row_count:,} | {rate:.1f} q/s | "
-                f"ETA {remaining:.1f}s",
-                file=sys.stderr,
-                flush=True,
-            )
-
-        rows.extend(run_scale_point(size, questions, memories, progress=report))
+    rows = []
+    for size in sizes:
+        rows.extend(rows_by_size[size])
 
     if show_progress:
         print("[scale] complete", file=sys.stderr, flush=True)
 
-    return rows, build_times, index_build_times
+    return (
+        rows,
+        [(size, build_times[size]) for size in sizes],
+        [(size, index_build_times[size]) for size in sizes],
+    )
 
 
 def row_dicts(rows):

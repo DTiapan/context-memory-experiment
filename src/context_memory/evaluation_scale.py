@@ -16,6 +16,7 @@ from .hierarchical_index import HierarchicalMemoryIndex
 from .selective_index import SelectiveMemoryIndex
 from .token_cache import TokenCache
 
+
 @dataclass(frozen=True)
 class ScaleRow:
     corpus_size: int
@@ -34,6 +35,11 @@ class ScaleRow:
     recall_at_3: float
     recall_at_5: float
     recall_at_8: float
+    precision_at_1: float
+    precision_at_3: float
+    precision_at_5: float
+    precision_at_8: float
+    unsupported_query_retrieval: float
     all_evidence_retrieved: bool
     retrieval_rounds: int
     latency_ms: float
@@ -47,10 +53,14 @@ def _metrics_row(size, question, strategy, retrieved_ids, candidate_count, chunk
     metrics = retrieval_metrics(retrieved_ids, question.gold_evidence_ids)
     gold = set(question.gold_evidence_ids)
     retrieved = set(retrieved_ids)
-    return ScaleRow(size, question.id, question.category, strategy, len(retrieved_ids), candidate_count,
-                    _tokens(chunks), metrics.recall_at_8, metrics.hit_at_1, metrics.hit_at_3,
-                    metrics.hit_at_5, metrics.hit_at_8, metrics.recall_at_1, metrics.recall_at_3,
-                    metrics.recall_at_5, metrics.recall_at_8, gold.issubset(retrieved), rounds, latency_ms)
+    return ScaleRow(
+        size, question.id, question.category, strategy, len(retrieved_ids), candidate_count,
+        _tokens(chunks), metrics.recall_at_8, metrics.hit_at_1, metrics.hit_at_3,
+        metrics.hit_at_5, metrics.hit_at_8, metrics.recall_at_1, metrics.recall_at_3,
+        metrics.recall_at_5, metrics.recall_at_8, metrics.precision_at_1,
+        metrics.precision_at_3, metrics.precision_at_5, metrics.precision_at_8,
+        metrics.unsupported_query_retrieval, gold.issubset(retrieved), rounds, latency_ms,
+    )
 
 
 def _row(size, question, result, by_id):
@@ -130,6 +140,7 @@ def _run_scale_point_worker(size, questions, corpus_builder, max_question_worker
     index_build_ms = (perf_counter() - start) * 1000
     last_reported = 0
     started_at = perf_counter()
+
     def report(question_number, question_total, row_count):
         nonlocal last_reported
         if question_number != question_total and question_number - last_reported < 10:
@@ -139,6 +150,7 @@ def _run_scale_point_worker(size, questions, corpus_builder, max_question_worker
         rate = question_number / elapsed if elapsed else 0.0
         remaining = (question_total - question_number) / rate if rate else 0.0
         print(f"[scale] corpus={size:,} | questions {question_number}/{question_total} | rows {row_count:,} | {rate:.1f} q/s | ETA {remaining:.1f}s", file=sys.stderr, flush=True)
+
     rows = run_scale_point(size, questions, memories, progress=report, max_question_workers=max_question_workers)
     return size, rows, build_ms, index_build_ms
 
@@ -178,20 +190,29 @@ def summarize(rows):
         groups.setdefault((row.corpus_size, row.strategy), []).append(row)
     output = []
     for (size, strategy), group in sorted(groups.items()):
-        output.append({"corpus_size": size, "strategy": strategy, "questions": len(group),
-                       "mean_recall": round(sum(r.recall for r in group) / len(group), 3),
-                       "hit_at_1": round(sum(r.hit_at_1 for r in group) / len(group), 3),
-                       "hit_at_3": round(sum(r.hit_at_3 for r in group) / len(group), 3),
-                       "hit_at_5": round(sum(r.hit_at_5 for r in group) / len(group), 3),
-                       "recall_at_1": round(sum(r.recall_at_1 for r in group) / len(group), 3),
-                       "recall_at_3": round(sum(r.recall_at_3 for r in group) / len(group), 3),
-                       "recall_at_5": round(sum(r.recall_at_5 for r in group) / len(group), 3),
-                       "recall_at_8": round(sum(r.recall_at_8 for r in group) / len(group), 3),
-                       "full_evidence_rate": round(sum(r.all_evidence_retrieved for r in group) / len(group), 3),
-                       "mean_context_tokens": round(sum(r.context_tokens for r in group) / len(group), 1),
-                       "mean_candidates_scanned": round(sum(r.candidates_scanned for r in group) / len(group), 1),
-                       "mean_retrieval_rounds": round(sum(r.retrieval_rounds for r in group) / len(group), 1),
-                       "mean_latency_ms": round(sum(r.latency_ms for r in group) / len(group), 3)})
+        output.append({
+            "corpus_size": size,
+            "strategy": strategy,
+            "questions": len(group),
+            "mean_recall": round(sum(r.recall for r in group) / len(group), 3),
+            "hit_at_1": round(sum(r.hit_at_1 for r in group) / len(group), 3),
+            "hit_at_3": round(sum(r.hit_at_3 for r in group) / len(group), 3),
+            "hit_at_5": round(sum(r.hit_at_5 for r in group) / len(group), 3),
+            "recall_at_1": round(sum(r.recall_at_1 for r in group) / len(group), 3),
+            "recall_at_3": round(sum(r.recall_at_3 for r in group) / len(group), 3),
+            "recall_at_5": round(sum(r.recall_at_5 for r in group) / len(group), 3),
+            "recall_at_8": round(sum(r.recall_at_8 for r in group) / len(group), 3),
+            "precision_at_1": round(sum(r.precision_at_1 for r in group) / len(group), 3),
+            "precision_at_3": round(sum(r.precision_at_3 for r in group) / len(group), 3),
+            "precision_at_5": round(sum(r.precision_at_5 for r in group) / len(group), 3),
+            "precision_at_8": round(sum(r.precision_at_8 for r in group) / len(group), 3),
+            "unsupported_query_retrieval_rate": round(sum(r.unsupported_query_retrieval for r in group) / len(group), 3),
+            "full_evidence_rate": round(sum(r.all_evidence_retrieved for r in group) / len(group), 3),
+            "mean_context_tokens": round(sum(r.context_tokens for r in group) / len(group), 1),
+            "mean_candidates_scanned": round(sum(r.candidates_scanned for r in group) / len(group), 1),
+            "mean_retrieval_rounds": round(sum(r.retrieval_rounds for r in group) / len(group), 1),
+            "mean_latency_ms": round(sum(r.latency_ms for r in group) / len(group), 3),
+        })
     return output
 
 

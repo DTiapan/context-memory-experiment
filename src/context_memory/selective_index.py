@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from collections import defaultdict
-import re
 from dataclasses import dataclass
 
 from .data import MemoryChunk
+from .token_cache import TokenCache, tokenize
 
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "with",
@@ -14,11 +14,7 @@ _STOPWORDS = {
 
 
 def terms(text: str) -> set[str]:
-    return {
-        token.lower()
-        for token in re.findall(r"[A-Za-z][A-Za-z0-9_-]{2,}", text)
-        if token.lower() not in _STOPWORDS
-    }
+    return {token for token in tokenize(text) if token not in _STOPWORDS}
 
 
 @dataclass(frozen=True)
@@ -32,18 +28,16 @@ class CandidateSet:
 
 
 class SelectiveMemoryIndex:
-    """Multi-term inverted index with intersection-based candidate selection.
+    """Multi-term inverted index with intersection-based candidate selection."""
 
-    The index is intentionally lexical for MVP-5. The experiment is testing
-    selectivity and candidate reduction before introducing semantic retrieval.
-    """
-
-    def __init__(self, memories: list[MemoryChunk]):
+    def __init__(self, memories: list[MemoryChunk], token_cache: TokenCache | None = None):
         self.memories = {m.id: m for m in memories}
+        self.token_cache = token_cache or TokenCache(memories)
         self.term_to_ids: dict[str, set[str]] = defaultdict(set)
         for memory in memories:
-            for term in terms(f"{memory.text} {memory.id}"):
-                self.term_to_ids[term].add(memory.id)
+            for term in self.token_cache.for_memory(memory):
+                if term not in _STOPWORDS:
+                    self.term_to_ids[term].add(memory.id)
 
     def lookup(self, query: str, *, min_terms: int = 1) -> CandidateSet:
         query_terms = terms(query)
@@ -52,10 +46,6 @@ class SelectiveMemoryIndex:
         if not postings:
             return CandidateSet(tuple(self.memories), ())
 
-        # Start with the rarest term, then add more terms only when they
-        # preserve candidates. This gives us intersection-based selectivity
-        # without making every query fail when one term is absent from the
-        # relevant memory.
         postings.sort(key=lambda item: len(item[1]))
         candidate_ids = set(postings[0][1])
         matched = [postings[0][0]]

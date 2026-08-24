@@ -5,6 +5,7 @@ from time import perf_counter
 
 from .data import BenchmarkQuestion, MemoryChunk
 from .retrieval import InvertedIndex, fixed_top_k, indexed_iterative, iterative
+from .or_retrieval import retrieve_or
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,34 @@ def _row(size: int, question: BenchmarkQuestion, result, by_id) -> ScaleRow:
     )
 
 
+def _or_row(size: int, question: BenchmarkQuestion, memories: list[MemoryChunk], by_id) -> ScaleRow:
+    start = perf_counter()
+    result = retrieve_or(
+        question.query,
+        memories,
+        top_k=8,
+        gold_evidence_ids=question.gold_evidence_ids,
+    )
+    latency_ms = (perf_counter() - start) * 1000
+    retrieved_ids = [candidate.memory.id for candidate in result.candidates]
+    gold = set(question.gold_evidence_ids)
+    retrieved = set(retrieved_ids)
+    chunks = [by_id[i] for i in retrieved_ids]
+    return ScaleRow(
+        size,
+        question.id,
+        question.category,
+        "or_ranked",
+        len(retrieved_ids),
+        result.candidate_count,
+        _tokens(chunks),
+        len(gold & retrieved) / len(gold),
+        gold.issubset(retrieved),
+        1,
+        latency_ms,
+    )
+
+
 def run_scale_point(size: int, questions: list[BenchmarkQuestion], memories: list[MemoryChunk]) -> list[ScaleRow]:
     index = InvertedIndex(memories)
     by_id = {m.id: m for m in memories}
@@ -55,6 +84,7 @@ def run_scale_point(size: int, questions: list[BenchmarkQuestion], memories: lis
         rows.append(_row(size, question, fixed_top_k(question, memories), by_id))
         rows.append(_row(size, question, iterative(question, memories), by_id))
         rows.append(_row(size, question, indexed_iterative(question, index), by_id))
+        rows.append(_or_row(size, question, memories, by_id))
     return rows
 
 

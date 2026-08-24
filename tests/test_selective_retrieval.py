@@ -7,7 +7,7 @@ def memory(memory_id: str, text: str) -> MemoryChunk:
 
 
 def question(query: str) -> BenchmarkQuestion:
-    return BenchmarkQuestion("q", query, "single-hop", ("m1",))
+    return BenchmarkQuestion("q", "single-hop", query, ("m1",), "simple")
 
 
 def test_selective_retrieval_ranks_only_candidates():

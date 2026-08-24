@@ -3,15 +3,31 @@ import json
 
 from .data import MEMORIES, QUESTIONS
 from .evaluation_v4 import run_benchmark_v4
+from .evaluation_scale import run_scaling_experiment, summarize, row_dicts
 from .judge import OpenRouterSufficiencyJudge
 from .evidence_directed import KeywordSufficiencyJudge
+from .scaling import SCALE_SIZES, build_corpus
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--llm-judge", action="store_true", help="run the OpenRouter evidence judge")
-    parser.add_argument("--model", default=None, help="OpenRouter model; defaults to OPENROUTER_MODEL or Nemotron 3.5 Lightning Free")
+    parser.add_argument("--model", default=None, help="OpenRouter model")
+    parser.add_argument("--scale", action="store_true", help="run the corpus scaling experiment")
     args = parser.parse_args()
+
+    if args.scale:
+        rows, build_times, index_build_times = run_scaling_experiment(SCALE_SIZES, QUESTIONS, build_corpus)
+        print(json.dumps({
+            "experiment": "corpus_scaling",
+            "questions": len(QUESTIONS),
+            "corpus_sizes": SCALE_SIZES,
+            "summary": summarize(rows),
+            "corpus_build_ms": [{"corpus_size": s, "latency_ms": round(t, 3)} for s, t in build_times],
+            "index_build_ms": [{"corpus_size": s, "latency_ms": round(t, 3)} for s, t in index_build_times],
+            "rows": row_dicts(rows),
+        }, indent=2))
+        return
 
     judge = OpenRouterSufficiencyJudge(args.model) if args.llm_judge else KeywordSufficiencyJudge()
     rows, summaries, category_summaries, stopping_summaries = run_benchmark_v4(QUESTIONS, MEMORIES, judge)

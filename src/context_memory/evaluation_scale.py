@@ -6,6 +6,7 @@ from time import perf_counter
 from .data import BenchmarkQuestion, MemoryChunk
 from .retrieval import InvertedIndex, fixed_top_k, indexed_iterative, iterative
 from .or_retrieval import retrieve_or
+from .hierarchical_index import HierarchicalMemoryIndex
 
 
 @dataclass(frozen=True)
@@ -74,8 +75,41 @@ def _or_row(size: int, question: BenchmarkQuestion, memories: list[MemoryChunk],
     )
 
 
+def _hierarchical_row(size: int, question: BenchmarkQuestion, index: HierarchicalMemoryIndex, by_id) -> ScaleRow:
+    start = perf_counter()
+    candidate_set = index.lookup(question.query, max_groups=4)
+    candidates = [index.memories[memory_id] for memory_id in candidate_set.memory_ids]
+
+    # The group lookup is the narrowing stage. Ranking is deliberately cheap
+    # lexical overlap so this experiment isolates hierarchy from semantics.
+    query_terms = set(question.query.lower().split())
+    scored = sorted(
+        candidates,
+        key=lambda memory: len(query_terms & set(memory.text.lower().split())),
+        reverse=True,
+    )[:8]
+    latency_ms = (perf_counter() - start) * 1000
+
+    gold = set(question.gold_evidence_ids)
+    retrieved = {memory.id for memory in scored}
+    return ScaleRow(
+        size,
+        question.id,
+        question.category,
+        "hierarchical",
+        len(scored),
+        candidate_set.count,
+        _tokens(scored),
+        len(gold & retrieved) / len(gold),
+        gold.issubset(retrieved),
+        2,
+        latency_ms,
+    )
+
+
 def run_scale_point(size: int, questions: list[BenchmarkQuestion], memories: list[MemoryChunk]) -> list[ScaleRow]:
     index = InvertedIndex(memories)
+    hierarchical_index = HierarchicalMemoryIndex(memories)
     by_id = {m.id: m for m in memories}
     rows: list[ScaleRow] = []
     for question in questions:
@@ -85,6 +119,7 @@ def run_scale_point(size: int, questions: list[BenchmarkQuestion], memories: lis
         rows.append(_row(size, question, iterative(question, memories), by_id))
         rows.append(_row(size, question, indexed_iterative(question, index), by_id))
         rows.append(_or_row(size, question, memories, by_id))
+        rows.append(_hierarchical_row(size, question, hierarchical_index, by_id))
     return rows
 
 

@@ -125,11 +125,14 @@ def summarize(rows):
 def run_scaling_experiment(sizes, questions, corpus_builder, max_workers=3, show_progress=True):
     if max_workers < 1:
         raise ValueError("max_workers must be >= 1")
-    workers = min(max_workers, len(sizes))
+    requested_workers = max_workers
+    actual_workers = min(max_workers, len(sizes))
     rows_by_size, build_times, index_build_times = {}, {}, {}
     if show_progress:
-        print(f"[scale] running {len(sizes)} corpus sizes with {workers} workers", file=sys.stderr, flush=True)
-    with ProcessPoolExecutor(max_workers=workers) as executor:
+        print(f"[scale] requested_workers={requested_workers} | corpus_jobs={len(sizes)} | actual_workers={actual_workers}", file=sys.stderr, flush=True)
+        if requested_workers > len(sizes):
+            print(f"[scale] note: only {len(sizes)} corpus-size jobs exist, so only {actual_workers} can run concurrently", file=sys.stderr, flush=True)
+    with ProcessPoolExecutor(max_workers=actual_workers) as executor:
         futures = {executor.submit(_run_scale_point_worker, size, questions, corpus_builder): size for size in sizes}
         completed = 0
         for future in as_completed(futures):

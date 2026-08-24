@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from time import perf_counter
+import heapq
 
 from .data import BenchmarkQuestion, MemoryChunk
 from .sufficiency import heuristic_sufficiency
@@ -59,7 +60,12 @@ def _rank(
     token_cache: TokenCache | None = None,
 ) -> list[MemoryChunk]:
     cache = token_cache or TokenCache(memories)
-    return sorted(memories, key=lambda m: (-score(question.query, m, cache), m.id))[:k]
+    query_tokens = cache.for_query(question.query)
+    scored = ((len(query_tokens & cache.for_memory(m)), m) for m in memories)
+    # Keep only the best k candidates instead of sorting the entire corpus.
+    # Tie-break by id to preserve the previous deterministic ordering.
+    best = heapq.nsmallest(k, scored, key=lambda item: (-item[0], item[1].id))
+    return [m for _, m in best]
 
 
 def full_context(question: BenchmarkQuestion, memories: list[MemoryChunk]) -> RetrievalResult:
@@ -107,13 +113,12 @@ def _progressive_rank(
     token_cache: TokenCache | None = None,
 ) -> tuple[list[MemoryChunk], int, int]:
     cache = token_cache or TokenCache(memories)
-    ordered = sorted(memories, key=lambda m: (-score(question.query, m, cache), m.id))
-    max_k = max_k or len(ordered)
+    max_k = max_k or len(memories)
     k = min(start_k, max_k)
     rounds = 0
     while True:
         rounds += 1
-        ranked = ordered[:k]
+        ranked = _rank(question, memories, k, cache)
         if _evidence_complete(question, ranked) or k >= max_k:
             return ranked, k, rounds
         k = min(k * 2, max_k)
@@ -127,13 +132,12 @@ def _heuristic_progressive_rank(
     token_cache: TokenCache | None = None,
 ) -> tuple[list[MemoryChunk], int, int, str]:
     cache = token_cache or TokenCache(memories)
-    ordered = sorted(memories, key=lambda m: (-score(question.query, m, cache), m.id))
-    max_k = max_k or len(ordered)
+    max_k = max_k or len(memories)
     k = min(start_k, max_k)
     rounds = 0
     while True:
         rounds += 1
-        ranked = ordered[:k]
+        ranked = _rank(question, memories, k, cache)
         decision = heuristic_sufficiency(question, ranked)
         if decision.sufficient or k >= max_k:
             reason = "heuristic_sufficient" if decision.sufficient else "max_k_reached"

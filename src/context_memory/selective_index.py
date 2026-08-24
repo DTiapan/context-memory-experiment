@@ -52,18 +52,19 @@ class SelectiveMemoryIndex:
         if not postings:
             return CandidateSet(tuple(self.memories), ())
 
-        # Start with the most selective posting lists and intersect them.
+        # Start with the rarest term, then add more terms only when they
+        # preserve candidates. This gives us intersection-based selectivity
+        # without making every query fail when one term is absent from the
+        # relevant memory.
         postings.sort(key=lambda item: len(item[1]))
-        selected = postings[: max(min_terms, 1)]
-        candidate_ids = set(selected[0][1])
-        matched = [selected[0][0]]
-        for term, ids in selected[1:]:
+        candidate_ids = set(postings[0][1])
+        matched = [postings[0][0]]
+
+        for term, ids in postings[1:]:
             intersection = candidate_ids & ids
             if intersection:
                 candidate_ids = intersection
                 matched.append(term)
-            else:
-                break
 
         return CandidateSet(tuple(sorted(candidate_ids)), tuple(matched))
 

@@ -16,14 +16,16 @@ def main() -> None:
     parser.add_argument("--llm-judge", action="store_true", help="run the OpenRouter evidence judge")
     parser.add_argument("--model", default=None, help="OpenRouter model")
     parser.add_argument("--scale", action="store_true", help="run the corpus scaling experiment")
+    parser.add_argument("--workers", type=int, default=3, help="parallel workers for --scale (default: 3)")
     args = parser.parse_args()
 
     if args.scale:
-        # Scaling uses the expanded question set so corpus size and query count
-        # are independent variables. The normal benchmark remains unchanged.
+        if args.workers < 1:
+            parser.error("--workers must be >= 1")
         scale_questions = EXPANDED_QUESTIONS
-        rows, build_times, index_build_times = run_scaling_experiment(SCALE_SIZES, scale_questions, build_corpus)
-        # Diagnostics are observational only: they do not alter retrieval.
+        rows, build_times, index_build_times = run_scaling_experiment(
+            SCALE_SIZES, scale_questions, build_corpus, max_workers=args.workers
+        )
         diagnostic_rows = {}
         for size in SCALE_SIZES:
             memories = build_corpus(size)
@@ -35,6 +37,7 @@ def main() -> None:
             "base_questions": len(QUESTIONS),
             "question_variants_per_base": len(scale_questions) // len(QUESTIONS),
             "corpus_sizes": SCALE_SIZES,
+            "workers": args.workers,
             "summary": summarize(rows),
             "corpus_build_ms": [{"corpus_size": s, "latency_ms": round(t, 3)} for s, t in build_times],
             "index_build_ms": [{"corpus_size": s, "latency_ms": round(t, 3)} for s, t in index_build_times],

@@ -2,22 +2,22 @@ import argparse
 import json
 
 from .data import MEMORIES, QUESTIONS
-from .evaluation_v3 import run_benchmark_v3
 from .evaluation_v4 import run_benchmark_v4
-from .judge import OpenAISufficiencyJudge
+from .judge import OpenRouterSufficiencyJudge
 from .evidence_directed import KeywordSufficiencyJudge
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--llm-judge", action="store_true", help="run the optional OpenAI evidence judge")
-    parser.add_argument("--model", default=None, help="OpenAI model; defaults to OPENAI_MODEL")
+    parser.add_argument("--llm-judge", action="store_true", help="run the OpenRouter evidence judge")
+    parser.add_argument("--model", default=None, help="OpenRouter model; defaults to OPENROUTER_MODEL or openai/gpt-5.5")
     args = parser.parse_args()
 
-    judge = OpenAISufficiencyJudge(args.model) if args.llm_judge else KeywordSufficiencyJudge()
+    judge = OpenRouterSufficiencyJudge(args.model) if args.llm_judge else KeywordSufficiencyJudge()
     rows, summaries, category_summaries, stopping_summaries = run_benchmark_v4(QUESTIONS, MEMORIES, judge)
     print(json.dumps({
-        "judge": "openai" if args.llm_judge else "keyword",
+        "judge": "openrouter" if args.llm_judge else "keyword",
+        "model": args.model,
         "summary": summaries,
         "by_category": category_summaries,
         "by_stopping_reason": stopping_summaries,

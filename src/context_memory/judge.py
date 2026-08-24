@@ -19,16 +19,24 @@ class SufficiencyJudge(Protocol):
     def judge(self, question: BenchmarkQuestion, memories: list[MemoryChunk]) -> JudgeDecision: ...
 
 
-class OpenAISufficiencyJudge:
-    """LLM evidence judge. Requires the optional `llm` dependency and OPENAI_API_KEY."""
+class OpenRouterSufficiencyJudge:
+    """LLM evidence judge using OpenRouter's OpenAI-compatible API."""
 
     def __init__(self, model: str | None = None):
         from openai import OpenAI
 
-        self.client = OpenAI()
-        self.model = model or os.environ.get("OPENAI_MODEL")
-        if not self.model:
-            raise ValueError("Set OPENAI_MODEL when using --llm-judge")
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not api_key:
+            raise ValueError("Set OPENROUTER_API_KEY when using --llm-judge")
+
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "X-Title": "context-memory-experiment",
+            },
+        )
+        self.model = model or os.environ.get("OPENROUTER_MODEL", "openai/gpt-5.5")
 
     def judge(self, question: BenchmarkQuestion, memories: list[MemoryChunk]) -> JudgeDecision:
         evidence = "\n".join(f"[{m.id}] {m.text}" for m in memories)
@@ -62,3 +70,7 @@ Return ONLY JSON matching this schema:
             float(payload.get("confidence", 0.0)),
             tuple(str(x) for x in payload.get("missing", [])),
         )
+
+
+# Backward-compatible name for callers that still import the old class.
+OpenAISufficiencyJudge = OpenRouterSufficiencyJudge

@@ -3,6 +3,7 @@ from time import perf_counter
 import re
 
 from .data import BenchmarkQuestion, MemoryChunk
+from .sufficiency import heuristic_sufficiency
 
 
 @dataclass(frozen=True)
@@ -12,6 +13,7 @@ class RetrievalResult:
     latency_ms: float
     candidate_count: int
     retrieval_rounds: int = 1
+    stopping_reason: str = "fixed_k"
 
 
 def _tokens(text: str) -> set[str]:
@@ -105,6 +107,27 @@ def _progressive_rank(
         k = min(k * 2, max_k)
 
 
+def _heuristic_progressive_rank(
+    question: BenchmarkQuestion,
+    memories: list[MemoryChunk],
+    start_k: int = 2,
+    max_k: int | None = None,
+) -> tuple[list[MemoryChunk], int, int, str]:
+    """Progressive retrieval using an evidence-sufficiency heuristic, no gold labels."""
+    ordered = sorted(memories, key=lambda m: (-score(question.query, m), m.id))
+    max_k = max_k or len(ordered)
+    k = min(start_k, max_k)
+    rounds = 0
+    while True:
+        rounds += 1
+        ranked = ordered[:k]
+        decision = heuristic_sufficiency(question, ranked)
+        if decision.sufficient or k >= max_k:
+            reason = "heuristic_sufficient" if decision.sufficient else "max_k_reached"
+            return ranked, k, rounds, reason
+        k = min(k * 2, max_k)
+
+
 def iterative(question: BenchmarkQuestion, memories: list[MemoryChunk]) -> RetrievalResult:
     start = perf_counter()
     ranked, scanned, rounds = _progressive_rank(question, memories)
@@ -114,6 +137,7 @@ def iterative(question: BenchmarkQuestion, memories: list[MemoryChunk]) -> Retri
         (perf_counter() - start) * 1000,
         scanned,
         rounds,
+        "oracle_evidence_complete",
     )
 
 
@@ -127,4 +151,32 @@ def indexed_iterative(question: BenchmarkQuestion, index: InvertedIndex) -> Retr
         (perf_counter() - start) * 1000,
         scanned,
         rounds,
+        "oracle_evidence_complete",
+    )
+
+
+def heuristic_iterative(question: BenchmarkQuestion, memories: list[MemoryChunk]) -> RetrievalResult:
+    start = perf_counter()
+    ranked, scanned, rounds, reason = _heuristic_progressive_rank(question, memories)
+    return RetrievalResult(
+        "heuristic_iterative",
+        tuple(m.id for m in ranked),
+        (perf_counter() - start) * 1000,
+        scanned,
+        rounds,
+        reason,
+    )
+
+
+def indexed_heuristic_iterative(question: BenchmarkQuestion, index: InvertedIndex) -> RetrievalResult:
+    start = perf_counter()
+    candidates = index.coarse_candidates(question.query)
+    ranked, scanned, rounds, reason = _heuristic_progressive_rank(question, candidates)
+    return RetrievalResult(
+        "indexed_heuristic_iterative",
+        tuple(m.id for m in ranked),
+        (perf_counter() - start) * 1000,
+        scanned,
+        rounds,
+        reason,
     )

@@ -16,6 +16,7 @@ def main() -> None:
     parser.add_argument("--llm-judge", action="store_true", help="run the OpenRouter evidence judge")
     parser.add_argument("--model", default=None, help="OpenRouter model")
     parser.add_argument("--scale", action="store_true", help="run the corpus scaling experiment")
+    parser.add_argument("--scale-size", type=int, default=None, help="run --scale for one supported corpus size")
     parser.add_argument("--profile", action="store_true", help="profile a small serial sample of the scale benchmark")
     parser.add_argument("--profile-size", type=int, default=100_000, help="corpus size for --profile (default: 100000)")
     parser.add_argument("--profile-questions", type=int, default=10, help="questions for --profile (default: 10)")
@@ -44,14 +45,18 @@ def main() -> None:
     if args.scale:
         if args.workers < 1:
             parser.error("--workers must be >= 1")
+        if args.scale_size is not None and args.scale_size not in SCALE_SIZES:
+            parser.error(f"--scale-size must be one of {SCALE_SIZES}")
+
+        scale_sizes = [args.scale_size] if args.scale_size is not None else list(SCALE_SIZES)
         scale_questions = EXPANDED_QUESTIONS
-        corpus_workers = min(args.workers, len(SCALE_SIZES))
+        corpus_workers = min(args.workers, len(scale_sizes))
         question_workers = max(1, (args.workers + corpus_workers - 1) // corpus_workers)
         rows, build_times, index_build_times = run_scaling_experiment(
-            SCALE_SIZES, scale_questions, build_corpus, max_workers=args.workers
+            scale_sizes, scale_questions, build_corpus, max_workers=args.workers
         )
         diagnostic_rows = {}
-        for size in SCALE_SIZES:
+        for size in scale_sizes:
             memories = build_corpus(size)
             diagnostic_rows[str(size)] = diagnostic_dicts(scale_questions, memories)
 
@@ -60,7 +65,7 @@ def main() -> None:
             "questions": len(scale_questions),
             "base_questions": len(QUESTIONS),
             "question_variants_per_base": len(scale_questions) // len(QUESTIONS),
-            "corpus_sizes": SCALE_SIZES,
+            "corpus_sizes": scale_sizes,
             "workers_requested": args.workers,
             "parallelism": {
                 "corpus_workers": corpus_workers,

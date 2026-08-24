@@ -11,6 +11,7 @@ class RetrievalResult:
     chunk_ids: tuple[str, ...]
     latency_ms: float
     candidate_count: int
+    retrieval_rounds: int = 1
 
 
 def _tokens(text: str) -> set[str]:
@@ -77,4 +78,53 @@ def indexed_adaptive(question: BenchmarkQuestion, index: InvertedIndex) -> Retri
         tuple(m.id for m in ranked),
         (perf_counter() - start) * 1000,
         len(candidates),
+    )
+
+
+def _evidence_complete(question: BenchmarkQuestion, ranked: list[MemoryChunk]) -> bool:
+    """Oracle used only by the controlled benchmark to test retrieval depth."""
+    return set(question.gold_evidence_ids).issubset({m.id for m in ranked})
+
+
+def _progressive_rank(
+    question: BenchmarkQuestion,
+    memories: list[MemoryChunk],
+    start_k: int = 2,
+    max_k: int | None = None,
+) -> tuple[list[MemoryChunk], int, int]:
+    """Retrieve in expanding batches until the benchmark evidence is complete."""
+    ordered = sorted(memories, key=lambda m: (-score(question.query, m), m.id))
+    max_k = max_k or len(ordered)
+    k = min(start_k, max_k)
+    rounds = 0
+    while True:
+        rounds += 1
+        ranked = ordered[:k]
+        if _evidence_complete(question, ranked) or k >= max_k:
+            return ranked, k, rounds
+        k = min(k * 2, max_k)
+
+
+def iterative(question: BenchmarkQuestion, memories: list[MemoryChunk]) -> RetrievalResult:
+    start = perf_counter()
+    ranked, scanned, rounds = _progressive_rank(question, memories)
+    return RetrievalResult(
+        "iterative",
+        tuple(m.id for m in ranked),
+        (perf_counter() - start) * 1000,
+        scanned,
+        rounds,
+    )
+
+
+def indexed_iterative(question: BenchmarkQuestion, index: InvertedIndex) -> RetrievalResult:
+    start = perf_counter()
+    candidates = index.coarse_candidates(question.query)
+    ranked, scanned, rounds = _progressive_rank(question, candidates)
+    return RetrievalResult(
+        "indexed_iterative",
+        tuple(m.id for m in ranked),
+        (perf_counter() - start) * 1000,
+        scanned,
+        rounds,
     )

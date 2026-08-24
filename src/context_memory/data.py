@@ -77,4 +77,11 @@ QUESTIONS = [
     BenchmarkQuestion("q28", "distractor-heavy", "What is the current API latency constraint?", ("m17",), "complex"),
     BenchmarkQuestion("q29", "distractor-heavy", "What is the current worker deployment decision?", ("m11",), "complex"),
     BenchmarkQuestion("q30", "distractor-heavy", "What is the rationale for the current event pipeline?", ("m7", "m14"), "complex"),
+
+    BenchmarkQuestion("q31", "abstention", "What database is used for the analytics warehouse?", (), "simple"),
+    BenchmarkQuestion("q32", "abstention", "Who is the CTO of the company?", (), "simple"),
+    BenchmarkQuestion("q33", "abstention", "What is the team's Kubernetes cluster size?", (), "simple"),
+    BenchmarkQuestion("q34", "abstention", "What is the monthly cloud infrastructure cost?", (), "simple"),
+    BenchmarkQuestion("q35", "abstention", "Which frontend framework does the team use?", (), "simple"),
+    BenchmarkQuestion("q36", "abstention", "What is the current Kafka consumer throughput?", (), "simple"),
 ]

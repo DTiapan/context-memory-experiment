@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import cProfile
+import io
+import pstats
 import sys
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
@@ -167,6 +170,50 @@ def _run_scale_point_worker(size, questions, corpus_builder, max_question_worker
         max_question_workers=max_question_workers,
     )
     return size, rows, build_ms, index_build_ms
+
+
+def profile_scale_point(size, questions, corpus_builder, top_n=20):
+    """Profile a small serial sample without running the full scaling benchmark.
+
+    This is deliberately separate from the benchmark path: it does not change any
+    retrieval algorithm or benchmark result. It answers where CPU time is actually
+    being spent before we choose another optimization such as indexing or GPU work.
+    """
+    if size < 1:
+        raise ValueError("size must be >= 1")
+    if not questions:
+        raise ValueError("questions must not be empty")
+    if top_n < 1:
+        raise ValueError("top_n must be >= 1")
+
+    memories = corpus_builder(size)
+    index = InvertedIndex(memories)
+    hierarchical_index = HierarchicalMemoryIndex(memories)
+    by_id = {m.id: m for m in memories}
+    sample = list(questions)
+
+    profiler = cProfile.Profile()
+    started_at = perf_counter()
+    profiler.enable()
+    rows = []
+    for question in sample:
+        rows.extend(_question_rows(size, question, memories, index, hierarchical_index, by_id))
+    profiler.disable()
+    elapsed_ms = (perf_counter() - started_at) * 1000
+
+    stream = io.StringIO()
+    stats = pstats.Stats(profiler, stream=stream).strip_dirs().sort_stats("cumulative")
+    stats.print_stats(top_n)
+
+    return {
+        "corpus_size": size,
+        "questions_profiled": len(sample),
+        "strategies_per_question": 5,
+        "rows_generated": len(rows),
+        "elapsed_ms": round(elapsed_ms, 3),
+        "mean_question_ms": round(elapsed_ms / len(sample), 3),
+        "profile": stream.getvalue(),
+    }
 
 
 def summarize(rows):

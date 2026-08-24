@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 
 from .data import BenchmarkQuestion, MemoryChunk
 from .retrieval import InvertedIndex, RetrievalResult
@@ -61,9 +61,6 @@ def summarize(rows: list[EvaluationRow]) -> list[dict]:
                 "mean_context_tokens": round(sum(r.context_tokens for r in items) / len(items), 1),
                 "mean_retrieved_chunks": round(sum(r.retrieved_count for r in items) / len(items), 1),
                 "mean_candidates_scanned": round(sum(r.candidate_count for r in items) / len(items), 1),
-                "mean_candidate_reduction": round(
-                    1 - (sum(r.candidate_count for r in items) / len(items)) / max(1, sum(r.candidate_count for r in items) / len(items)), 3
-                ) if strategy == "full" else None,
                 "mean_latency_ms": round(sum(r.latency_ms for r in items) / len(items), 4),
             }
         )

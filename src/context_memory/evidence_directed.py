@@ -74,9 +74,26 @@ def _run(
     )
 
 
-def llm_iterative(question: BenchmarkQuestion, memories: list[MemoryChunk], judge: SufficiencyJudge) -> RetrievalResult:
-    return _run(question, memories, judge, "llm_iterative")
+def llm_iterative(
+    question: BenchmarkQuestion,
+    memories: list[MemoryChunk],
+    judge: SufficiencyJudge,
+    max_rounds: int = 5,
+) -> RetrievalResult:
+    return _run(question, memories, judge, "llm_iterative", max_rounds=max_rounds)
 
 
-def indexed_llm_iterative(question: BenchmarkQuestion, index: InvertedIndex, judge: SufficiencyJudge) -> RetrievalResult:
-    return _run(question, list(index.memories.values()), judge, "indexed_llm_iterative", indexed=True)
+def indexed_llm_iterative(
+    question: BenchmarkQuestion,
+    index: InvertedIndex,
+    judge: SufficiencyJudge,
+    max_rounds: int = 5,
+) -> RetrievalResult:
+    return _run(
+        question,
+        list(index.memories.values()),
+        judge,
+        "indexed_llm_iterative",
+        max_rounds=max_rounds,
+        indexed=True,
+    )

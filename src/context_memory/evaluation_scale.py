@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from time import perf_counter
 
+from .benchmark_metrics import retrieval_metrics
 from .data import BenchmarkQuestion, MemoryChunk
 from .retrieval import InvertedIndex, fixed_top_k, indexed_iterative, iterative
 from .or_retrieval import retrieve_or
@@ -19,6 +20,14 @@ class ScaleRow:
     candidates_scanned: int
     context_tokens: int
     recall: float
+    hit_at_1: float
+    hit_at_3: float
+    hit_at_5: float
+    hit_at_8: float
+    recall_at_1: float
+    recall_at_3: float
+    recall_at_5: float
+    recall_at_8: float
     all_evidence_retrieved: bool
     retrieval_rounds: int
     latency_ms: float
@@ -28,20 +37,51 @@ def _tokens(memories: list[MemoryChunk]) -> int:
     return sum(max(1, len(m.text.split())) for m in memories)
 
 
-def _row(size: int, question: BenchmarkQuestion, result, by_id) -> ScaleRow:
+def _metrics_row(
+    size: int,
+    question: BenchmarkQuestion,
+    strategy: str,
+    retrieved_ids: tuple[str, ...],
+    candidate_count: int,
+    chunks: list[MemoryChunk],
+    rounds: int,
+    latency_ms: float,
+) -> ScaleRow:
+    metrics = retrieval_metrics(retrieved_ids, question.gold_evidence_ids)
     gold = set(question.gold_evidence_ids)
-    retrieved = set(result.chunk_ids)
-    chunks = [by_id[i] for i in result.chunk_ids]
+    retrieved = set(retrieved_ids)
     return ScaleRow(
         size,
         question.id,
         question.category,
-        result.strategy,
-        len(result.chunk_ids),
-        result.candidate_count,
+        strategy,
+        len(retrieved_ids),
+        candidate_count,
         _tokens(chunks),
-        len(gold & retrieved) / len(gold),
+        metrics.recall_at_8,
+        metrics.hit_at_1,
+        metrics.hit_at_3,
+        metrics.hit_at_5,
+        metrics.hit_at_8,
+        metrics.recall_at_1,
+        metrics.recall_at_3,
+        metrics.recall_at_5,
+        metrics.recall_at_8,
         gold.issubset(retrieved),
+        rounds,
+        latency_ms,
+    )
+
+
+def _row(size: int, question: BenchmarkQuestion, result, by_id) -> ScaleRow:
+    chunks = [by_id[i] for i in result.chunk_ids]
+    return _metrics_row(
+        size,
+        question,
+        result.strategy,
+        result.chunk_ids,
+        result.candidate_count,
+        chunks,
         result.retrieval_rounds,
         result.latency_ms,
     )
@@ -56,23 +96,9 @@ def _or_row(size: int, question: BenchmarkQuestion, memories: list[MemoryChunk],
         gold_evidence_ids=question.gold_evidence_ids,
     )
     latency_ms = (perf_counter() - start) * 1000
-    retrieved_ids = [candidate.memory.id for candidate in result.candidates]
-    gold = set(question.gold_evidence_ids)
-    retrieved = set(retrieved_ids)
+    retrieved_ids = tuple(candidate.memory.id for candidate in result.candidates)
     chunks = [by_id[i] for i in retrieved_ids]
-    return ScaleRow(
-        size,
-        question.id,
-        question.category,
-        "or_ranked",
-        len(retrieved_ids),
-        result.candidate_count,
-        _tokens(chunks),
-        len(gold & retrieved) / len(gold),
-        gold.issubset(retrieved),
-        1,
-        latency_ms,
-    )
+    return _metrics_row(size, question, "or_ranked", retrieved_ids, result.candidate_count, chunks, 1, latency_ms)
 
 
 def _hierarchical_row(size: int, question: BenchmarkQuestion, index: HierarchicalMemoryIndex, by_id) -> ScaleRow:
@@ -89,22 +115,8 @@ def _hierarchical_row(size: int, question: BenchmarkQuestion, index: Hierarchica
         reverse=True,
     )[:8]
     latency_ms = (perf_counter() - start) * 1000
-
-    gold = set(question.gold_evidence_ids)
-    retrieved = {memory.id for memory in scored}
-    return ScaleRow(
-        size,
-        question.id,
-        question.category,
-        "hierarchical",
-        len(scored),
-        candidate_set.count,
-        _tokens(scored),
-        len(gold & retrieved) / len(gold),
-        gold.issubset(retrieved),
-        2,
-        latency_ms,
-    )
+    retrieved_ids = tuple(memory.id for memory in scored)
+    return _metrics_row(size, question, "hierarchical", retrieved_ids, candidate_set.count, scored, 2, latency_ms)
 
 
 def run_scale_point(size: int, questions: list[BenchmarkQuestion], memories: list[MemoryChunk]) -> list[ScaleRow]:
@@ -135,6 +147,13 @@ def summarize(rows: list[ScaleRow]) -> list[dict]:
             "strategy": strategy,
             "questions": len(group),
             "mean_recall": round(sum(r.recall for r in group) / len(group), 3),
+            "hit_at_1": round(sum(r.hit_at_1 for r in group) / len(group), 3),
+            "hit_at_3": round(sum(r.hit_at_3 for r in group) / len(group), 3),
+            "hit_at_5": round(sum(r.hit_at_5 for r in group) / len(group), 3),
+            "recall_at_1": round(sum(r.recall_at_1 for r in group) / len(group), 3),
+            "recall_at_3": round(sum(r.recall_at_3 for r in group) / len(group), 3),
+            "recall_at_5": round(sum(r.recall_at_5 for r in group) / len(group), 3),
+            "recall_at_8": round(sum(r.recall_at_8 for r in group) / len(group), 3),
             "full_evidence_rate": round(sum(r.all_evidence_retrieved for r in group) / len(group), 3),
             "mean_context_tokens": round(sum(r.context_tokens for r in group) / len(group), 1),
             "mean_candidates_scanned": round(sum(r.candidates_scanned for r in group) / len(group), 1),

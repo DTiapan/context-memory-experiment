@@ -10,13 +10,14 @@ def question(query: str) -> BenchmarkQuestion:
     return BenchmarkQuestion("q", "single-hop", query, ("m1",), "simple")
 
 
-def test_selective_retrieval_ranks_only_candidates():
+def test_selective_retrieval_intersects_query_terms():
     memories = [
         memory("m1", "Redis caching reduced latency"),
         memory("m2", "Postgres database migration"),
         memory("m3", "Redis unrelated discussion"),
+        memory("m4", "Caching unrelated discussion"),
     ]
     result = retrieve(question("Redis caching"), memories, top_k=2)
-    assert result.candidate_count == 2
-    assert result.candidate_ratio == 2 / 3
+    assert result.candidate_count == 1
+    assert result.candidate_ratio == 1 / 4
     assert result.memories[0].id == "m1"
